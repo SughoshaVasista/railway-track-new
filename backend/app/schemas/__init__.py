@@ -1,2 +1,1 @@
-"""Pydantic API contracts."""
-
+"""Pydantic schemas; domain schemas are introduced with their routes."""

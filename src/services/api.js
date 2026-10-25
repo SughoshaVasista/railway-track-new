@@ -5,45 +5,48 @@ export const api = axios.create({
   timeout: 8000,
 })
 
-export const inferenceApi = axios.create({
-  baseURL: import.meta.env.VITE_INFERENCE_API_BASE_URL || api.defaults.baseURL,
-  timeout: 8000,
-})
-
-const unwrapResponse = (body) => body && body.success === true && Object.prototype.hasOwnProperty.call(body, 'data') ? body.data : body
-
 let unauthorizedHandler
 export const registerUnauthorizedHandler = (handler) => { unauthorizedHandler = handler }
 
+const storedAuth = () => {
+  for (const storage of [window.localStorage, window.sessionStorage]) {
+    const raw = storage.getItem('amrin_auth')
+    if (!raw) continue
+    try {
+      const auth = JSON.parse(raw)
+      if (auth && typeof auth === 'object') return auth
+    } catch {
+      storage.removeItem('amrin_auth')
+    }
+  }
+  return null
+}
+
 api.interceptors.request.use((config) => {
-  const apiKey = import.meta.env.VITE_API_KEY
-  if (apiKey) config.headers['X-API-Key'] = apiKey
-  const raw = window.localStorage.getItem('amrin_auth') || window.sessionStorage.getItem('amrin_auth')
-  const auth = raw ? JSON.parse(raw) : null
+  const auth = storedAuth()
   if (auth?.token) config.headers.Authorization = `Bearer ${auth.token}`
+  if (typeof FormData !== 'undefined' && config.data instanceof FormData) config.headers.delete?.('Content-Type')
   return config
 })
 
 api.interceptors.response.use((response) => response, (error) => {
-  if (error.response?.status === 401) unauthorizedHandler?.()
+  const requestPath = String(error.config?.url || '')
+  const isPublicAuthRequest = /\/auth\/(login|register)\/?$/.test(requestPath)
+  const apiError = error.response?.data?.error
+  if (apiError?.code) error.code = apiError.code
+  if (apiError?.message) error.message = apiError.message
+  if (error.response?.status === 401 && !isPublicAuthRequest) unauthorizedHandler?.()
   return Promise.reject(error)
 })
 
-inferenceApi.interceptors.request.use((config) => {
-  const apiKey = import.meta.env.VITE_API_KEY
-  if (apiKey) config.headers['X-API-Key'] = apiKey
-  return config
-})
+export const apiErrorMessage = (error, fallback = 'The server did not accept this request.') => error?.response?.data?.error?.message || error?.message || fallback
 
-inferenceApi.interceptors.response.use((response) => response, (error) => {
-  if (error.response?.status === 401) unauthorizedHandler?.()
-  return Promise.reject(error)
-})
-
-const get = (path, params) => api.get(path, { params }).then(({ data }) => unwrapResponse(data))
-const post = (path, body) => api.post(path, body).then(({ data }) => unwrapResponse(data))
+const get = (path, params) => api.get(path, { params }).then(({ data }) => data)
+const post = (path, body) => api.post(path, body).then(({ data }) => data)
 
 export const loginRequest = (credentials) => post('/auth/login', credentials)
+export const registerRequest = (body) => post('/auth/register', body)
+export const getCurrentUser = () => get('/auth/me')
 export const getAlerts = (filters = {}) => get('/alerts', filters)
 export const getAlert = (id) => get(`/alerts/${id}`)
 export const acknowledgeAlert = (id, body) => post(`/alerts/${id}/acknowledge`, body)
@@ -57,20 +60,24 @@ export const getDeviceSensors = (id, params = {}) => get(`/devices/${id}/sensors
 export const getDeviceDiagnostics = (id) => get(`/devices/${id}/diagnostics`)
 export const getTasks = (params = {}) => get('/tasks', params)
 export const createTask = (body) => post('/tasks', body)
+export const assignTask = (id, body) => post(`/tasks/${encodeURIComponent(id)}/assignment`, body)
+export const unassignTask = (id) => api.delete(`/tasks/${encodeURIComponent(id)}/assignment`).then(({ data }) => data)
 export const getWorkers = () => get('/workers')
+export const getPendingUsers = () => get('/users/pending')
+export const approveUser = (id) => post(`/users/${encodeURIComponent(id)}/approve`)
+export const rejectUser = (id) => post(`/users/${encodeURIComponent(id)}/reject`)
 export const updateTaskStatus = (id, body) => api.put(`/tasks/${id}/status`, body).then(({ data }) => data)
-export const uploadTaskEvidence = (id, body) => api.post(`/tasks/${id}/evidence`, body).then(({ data }) => data)
+export const submitTaskForReview = (id, body = {}) => post(`/tasks/${encodeURIComponent(id)}/submit`, body)
+export const reviewTask = (id, body) => post(`/tasks/${encodeURIComponent(id)}/review`, body)
+export const uploadTaskEvidence = (id, body) => api.post(`/tasks/${encodeURIComponent(id)}/evidence`, body).then(({ data }) => data)
+export const getTaskEvidenceImage = (url) => {
+  const path = url.startsWith('/api/') ? url.slice(4) : url
+  return api.get(path, { responseType: 'blob' }).then(({ data }) => data)
+}
 export const getTracks = (params = {}) => get('/tracks', params)
 export const getTrains = (params = {}) => get('/trains', params)
 export const getSwitchStatus = (params = {}) => get('/switch/status', params)
-export const postSwitchDecision = (body) => post('/switch/decision', body)
-export const setSimulationMode = (body) => post('/simulation/mode', body)
-export const getSimulationState = () => get('/simulation/state')
 export const getDashboardSummary = (params = {}) => get('/dashboard/summary', params)
 export const getDashboardEventLog = (params = {}) => get('/dashboard/event-log', params)
-export const getModelStatus = () => inferenceApi.get('/inference/status').then(({ data }) => unwrapResponse(data))
-export const runImageInference = (file, options = {}) => {
-  const body = new FormData()
-  body.append('file', file)
-  return inferenceApi.post('/inference/detect', body, { params: options, timeout: 120000 }).then(({ data }) => unwrapResponse(data))
-}
+export const getModelStatus = () => get('/model/status')
+export const getAIDetection = () => get('/ai/detection')

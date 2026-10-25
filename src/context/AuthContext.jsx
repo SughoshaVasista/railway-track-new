@@ -1,21 +1,21 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
-import { loginRequest, registerUnauthorizedHandler } from '../services/api'
+import { loginRequest, registerRequest, registerUnauthorizedHandler } from '../services/api'
+import { loginDemo, registerDemo } from '../services/auth'
 
 const AUTH_KEY = 'amrin_auth'
-const DEMO_AUTH_ENABLED = import.meta.env.DEV && import.meta.env.VITE_DEMO_AUTH !== 'false'
 const AuthContext = createContext(null)
 
 const readStoredAuth = () => {
   for (const storage of [window.localStorage, window.sessionStorage]) {
+    const raw = storage.getItem(AUTH_KEY)
+    if (!raw) continue
     try {
-      const raw = storage.getItem(AUTH_KEY)
-      if (!raw) continue
       const value = JSON.parse(raw)
-      if (value && typeof value === 'object' && value.token && ['admin', 'worker'].includes(value.role)) return value
-      storage.removeItem(AUTH_KEY)
+      if (value && typeof value.token === 'string' && ['admin', 'worker'].includes(value.role)) return value
     } catch {
-      try { storage.removeItem(AUTH_KEY) } catch { /* Storage may be unavailable in private contexts. */ }
+      // Discard malformed persisted auth and continue checking the other store.
     }
+    storage.removeItem(AUTH_KEY)
   }
   return null
 }
@@ -40,12 +40,10 @@ export function AuthProvider({ children }) {
     try {
       result = await loginRequest(credentials)
     } catch (error) {
-      const demoUsers = { admin: { password: 'admin', role: 'admin', name: 'Admin User' }, worker: { password: 'worker', role: 'worker', name: 'Maintenance Worker', worker_id: 'worker-01' } }
-      const demoUser = demoUsers[credentials.username]
-      if (!DEMO_AUTH_ENABLED || !demoUser || demoUser.password !== credentials.password) throw error
-      result = { token: `demo-${credentials.username}-token`, ...demoUser }
+      if (import.meta.env.VITE_DEMO_AUTH !== 'true') throw error
+      result = await loginDemo(credentials.username, credentials.password)
     }
-    const nextAuth = { token: result.token, role: result.role, name: result.name, worker_id: result.worker_id }
+    const nextAuth = { token: result.token, role: result.role, name: result.name, worker_id: result.worker_id, city: result.city }
     const storage = remember ? window.localStorage : window.sessionStorage
     window.localStorage.removeItem(AUTH_KEY)
     window.sessionStorage.removeItem(AUTH_KEY)
@@ -54,7 +52,11 @@ export function AuthProvider({ children }) {
     return nextAuth
   }
 
-  const value = useMemo(() => ({ auth, user: auth, ready, login, logout }), [auth, ready])
+  const register = async (details) => {
+    try { return await registerRequest(details) } catch (error) { if (import.meta.env.VITE_DEMO_AUTH !== 'true') throw error; return registerDemo(details) }
+  }
+
+  const value = useMemo(() => ({ auth, user: auth, ready, login, register, logout }), [auth, ready])
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 

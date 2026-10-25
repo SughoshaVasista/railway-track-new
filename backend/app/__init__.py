@@ -1,2 +1,1 @@
-"""Railway crack detection API."""
-
+"""AMRIN backend application package."""

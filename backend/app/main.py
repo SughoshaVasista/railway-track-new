@@ -1,129 +1,129 @@
-from __future__ import annotations
-
-import asyncio
 import logging
-import secrets
-from contextlib import asynccontextmanager
+from collections.abc import Mapping
+from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Security
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.security import APIKeyHeader
+from sqlalchemy.exc import SQLAlchemyError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.cors import CORSMiddleware
 
-from app.config import get_settings
-from app.database import check_database, initialize_database
-from app.firebase import FirebaseMirror, dispatch_outbox
-from app.routers import alerts, dashboard, devices, frontend_compat, inference, sensors, switch, tasks
-from app.services.common import ServiceError
-from app.services.inference_service import ModelManager
+from app.config import Settings
+from app.api.routers.auth import router as auth_router
+from app.api.routers.ml_ingest import router as ml_ingest_router
+from app.api.routers.operations import router as operations_router
+from app.api.routers.telemetry import router as telemetry_router
+from app.api.routers.users import router as users_router
+from app.db.session import build_engine, build_session_factory, get_db
+from app.errors import AppError
+from app.logging_config import configure_logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-)
-logger = logging.getLogger(__name__)
-settings = get_settings()
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+logger = logging.getLogger("amrin.api")
 
 
-async def authenticate_api(request: Request, supplied_key: str | None = Security(api_key_header)) -> None:
-    if not request.url.path.startswith("/api/"):
-        return
-    configured_key = request.app.state.settings.api_key
-    if configured_key is None:
-        if request.app.state.settings.app_env == "production":
-            raise HTTPException(status_code=503, detail="API authentication is not configured")
-        return
-    if supplied_key is None or not secrets.compare_digest(supplied_key.encode("utf-8"), configured_key.encode("utf-8")):
-        raise HTTPException(status_code=401, detail="A valid X-API-Key is required")
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    current_settings = get_settings()
-    if current_settings.app_env == "production" and not current_settings.api_key:
-        raise RuntimeError("Set API_KEY before starting with APP_ENV=production")
-    if current_settings.app_env == "production" and "*" in current_settings.cors_origins:
-        raise RuntimeError("Wildcard CORS origins are not allowed in production")
-    initialize_database()
-    app.state.settings = current_settings
-    app.state.model_manager = ModelManager(current_settings.model_path)
-    mirror = FirebaseMirror(current_settings)
-    app.state.firebase_mirror = mirror
-    app.state.sync_stop = asyncio.Event()
-    app.state.sync_task = None
-    if mirror.enabled:
-        app.state.sync_task = asyncio.create_task(dispatch_outbox(mirror, app.state.sync_stop))
-        logger.info("Firebase outbox dispatcher enabled")
+def create_app(settings: Settings | Mapping[str, Any] | None = None) -> FastAPI:
+    """Build a configured AMRIN API app, optionally with isolated test settings."""
+    configure_logging()
+    if settings is None:
+        resolved_settings = Settings()
+    elif isinstance(settings, Settings):
+        resolved_settings = settings
     else:
-        logger.info("Firebase mirror disabled; set FIREBASE_DATABASE_URL and FIREBASE_CREDENTIALS to enable it")
-    yield
-    if app.state.sync_task:
-        app.state.sync_stop.set()
-        await app.state.sync_task
+        resolved_settings = Settings(**settings)
 
+    application = FastAPI(title="AMRIN API", version="0.1.0")
+    application.state.settings = resolved_settings
+    application.state.engine = build_engine(resolved_settings.database_url)
+    application.state.session_factory = build_session_factory(application.state.engine)
+    application.include_router(auth_router)
+    application.include_router(operations_router)
+    application.include_router(telemetry_router)
+    application.include_router(users_router)
+    application.include_router(ml_ingest_router)
 
-app = FastAPI(
-    title="Railway Crack Detection API",
-    description="SQLite-backed railway defect monitoring API and local YOLO inference service.",
-    version="1.0.0",
-    lifespan=lifespan,
-    dependencies=[Depends(authenticate_api)],
-)
-app.state.settings = settings
-app.mount("/media", StaticFiles(directory=settings.database_path.parent / "evidence", check_dir=False), name="media")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=list(settings.cors_origins),
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-API-Key", "Authorization"],
-)
-
-
-@app.exception_handler(ServiceError)
-async def service_error_handler(_request: Request, exc: ServiceError):
-    return JSONResponse(status_code=exc.status_code, content={"success": False, "data": None, "error": exc.message})
-
-
-@app.exception_handler(HTTPException)
-async def http_error_handler(_request: Request, exc: HTTPException):
-    detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
-    return JSONResponse(status_code=exc.status_code, headers=exc.headers,
-                        content={"success": False, "data": None, "error": detail})
-
-
-@app.exception_handler(RequestValidationError)
-async def validation_error_handler(_request: Request, exc: RequestValidationError):
-    errors = "; ".join(
-        f"{'/'.join(str(part) for part in item['loc'])}: {item['msg']}" for item in exc.errors()
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=resolved_settings.cors_origin_list,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-ML-API-Key", "X-Sensor-API-Key"],
     )
-    return JSONResponse(status_code=422, content={"success": False, "data": None, "error": errors})
+
+    @application.middleware("http")
+    async def enforce_request_size(request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                too_large = int(content_length) > resolved_settings.max_content_length
+            except ValueError:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": {"code": "invalid_content_length", "message": "Content-Length must be an integer"}},
+                )
+            if too_large:
+                return JSONResponse(
+                    status_code=413,
+                    content={"error": {"code": "request_too_large", "message": "Request exceeds the configured size limit"}},
+                )
+        return await call_next(request)
+
+    @application.get("/api/health", tags=["health"])
+    def health():
+        try:
+            with application.state.engine.connect() as connection:
+                connection.exec_driver_sql("SELECT 1 FROM users LIMIT 1")
+        except SQLAlchemyError:
+            return JSONResponse(
+                status_code=503,
+                content={"status": "unavailable", "database": "unavailable"},
+            )
+        return {"status": "ok"}
+
+    @application.exception_handler(AppError)
+    async def app_error_handler(_request: Request, exc: AppError) -> JSONResponse:
+        error: dict[str, Any] = {"code": exc.code, "message": exc.message}
+        if exc.details is not None:
+            error["details"] = exc.details
+        return JSONResponse(status_code=exc.status_code, content={"error": error})
+
+    @application.exception_handler(StarletteHTTPException)
+    async def http_error_handler(_request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        message = exc.detail if isinstance(exc.detail, str) else "Request failed"
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": f"http_{exc.status_code}", "message": message}},
+            headers=exc.headers,
+        )
+
+    @application.exception_handler(RequestValidationError)
+    async def validation_error_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": "validation_error",
+                    "message": "Request validation failed",
+                    "details": jsonable_encoder(exc.errors()),
+                }
+            },
+        )
+
+    @application.exception_handler(Exception)
+    async def unhandled_error_handler(_request: Request, exc: Exception) -> JSONResponse:
+        logger.exception("Unhandled API error", exc_info=exc)
+        message = "Internal server error"
+        if resolved_settings.environment.lower() not in {"production", "prod"}:
+            message = str(exc) or message
+        return JSONResponse(
+            status_code=500,
+            content={"error": {"code": "internal_server_error", "message": message}},
+        )
+
+    return application
 
 
-@app.exception_handler(Exception)
-async def unexpected_error_handler(_request: Request, exc: Exception):
-    logger.error("Unhandled request error", exc_info=(type(exc), exc, exc.__traceback__))
-    return JSONResponse(status_code=500, content={"success": False, "data": None, "error": "Internal server error"})
+app = create_app()
 
-
-@app.get("/health/live", tags=["health"])
-def live_health():
-    return {"success": True, "data": {"status": "alive"}, "error": None}
-
-
-@app.get("/health/ready", tags=["health"])
-def ready_health():
-    try:
-        check_database()
-    except Exception as exc:
-        logger.exception("Database readiness check failed")
-        return JSONResponse(status_code=503, content={"success": False, "data": {"database": "unavailable"}, "error": str(exc)})
-    return {"success": True, "data": {"database": "ready"}, "error": None}
-
-
-for route_module in (alerts, devices, sensors, tasks, switch, dashboard, inference, frontend_compat):
-    app.include_router(route_module.router)
-
+__all__ = ["app", "create_app", "get_db"]

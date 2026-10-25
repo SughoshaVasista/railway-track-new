@@ -28,14 +28,24 @@ __pycache__/
 *.sln
 *.sw?
 
-# Local environments and generated build outputs
-.venv/
-.venv-*/
-node_modules/
-dist/
+# AMRIN FastAPI backend
+/backend/.venv/
+/backend/venv/
+/backend/.env
+/backend/instance/*.db
+/backend/instance/*.sqlite
+/backend/instance/*.sqlite3
+/backend/uploads/**
+!/backend/uploads/.gitkeep
+/backend/.pytest_cache/
+/backend/.coverage
+/backend/htmlcov/
+/backend/test-results/
 
-# Local datasets, databases, and experiment outputs
-data/datasets/
-data/railway.db
-runs/*
-!runs/**/.gitkeep
+# Local environments and generated RailSafe data
+/.venv/
+/.venv-*/
+/backend/.venv-*/
+/data/datasets/
+/data/railway.db
+/runs/

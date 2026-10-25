@@ -1,0 +1,35 @@
+:root {
+  --bg: #F4F3EF;
+  --surface: #FFFFFF;
+  --surface-2: #ECEAE4;
+  --border: #D9D7D0;
+  --text: #16181A;
+  --muted: #5E646B;
+  --ink: #16181A;
+  --ink-text: #FFFFFF;
+  --signal-s1: #5AA9E6;
+  --signal-s2: #F2A93B;
+  --signal-s3: #D62839;
+  --signal-green: #35C48C;
+  --signal-s1-text: #1D6FB8;
+  --signal-s2-text: #8A5300;
+  --signal-s3-text: #B3202F;
+  --radius: 4px;
+  --font-body: 'IBM Plex Sans', sans-serif;
+  --font-heading: 'IBM Plex Sans Condensed', sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+}
+
+:root[data-theme='dark'] {
+  --bg: #0F1113;
+  --surface: #16191C;
+  --surface-2: #1D2125;
+  --border: #2A2F35;
+  --text: #E8EAEC;
+  --muted: #8A9199;
+  --ink: #E8EAEC;
+  --ink-text: #0F1113;
+  --signal-s1-text: #5AA9E6;
+  --signal-s2-text: #F2A93B;
+  --signal-s3-text: #D62839;
+}
