@@ -1,0 +1,22 @@
+import React, { useEffect, useState } from 'react'
+import Header from '../components/Header'
+import Panel from '../components/Panel'
+import { EmptyState, LoadingState } from '../components/StateMessage'
+import { runImageInference } from '../services/api'
+
+const display = (value) => value === undefined || value === null || value === '' ? 'NO DATA' : value
+
+function DetectionFrame({ image, result }) {
+  const boxes = result?.detections || []; const width = Number(result?.image_width); const height = Number(result?.image_height)
+  if (!image) return <div className="ai-frame"><EmptyState>Image unavailable</EmptyState></div>
+  return <div className="ai-frame" style={width && height ? { aspectRatio: `${width} / ${height}`, minHeight: 0 } : undefined}><img src={image} alt="Uploaded railway inspection image" />{boxes.map((box, index) => { const x = Number(box.bbox?.x1); const y = Number(box.bbox?.y1); const right = Number(box.bbox?.x2); const bottom = Number(box.bbox?.y2); const w = right - x; const h = bottom - y; if (![x, y, w, h].every(Number.isFinite) || !width || !height) return null; const confidence = Number(box.confidence); const label = box.defect_type || box.class_name || 'Detection'; return <div className="ai-box" key={index} style={{ left: `${x / width * 100}%`, top: `${y / height * 100}%`, width: `${w / width * 100}%`, height: `${h / height * 100}%` }}><span>{label} · {Number.isFinite(confidence) ? `${(confidence * 100).toFixed(1)}%` : display(box.confidence)}</span></div> })}</div>
+}
+
+export default function AI() {
+  const [file, setFile] = useState(null); const [imageUrl, setImageUrl] = useState(''); const [result, setResult] = useState(null); const [loading, setLoading] = useState(false); const [error, setError] = useState('')
+  useEffect(() => () => { if (imageUrl) URL.revokeObjectURL(imageUrl) }, [imageUrl])
+  const chooseFile = (event) => { const next = event.target.files?.[0] || null; setFile(next); setImageUrl(next ? URL.createObjectURL(next) : ''); setResult(null); setError('') }
+  const submit = async (event) => { event.preventDefault(); if (!file) return; setLoading(true); setError(''); setResult(null); try { setResult(await runImageInference(file)) } catch (requestError) { setError(requestError.response?.data?.error || requestError.response?.data?.detail || requestError.message || 'Inference request failed.') } finally { setLoading(false) } }
+  const detections = result?.detections || []
+  return <><Header title="AI Detection" text="Run the trained railway crack model against an inspection image." /><div className="banner"><strong>Image inference runs on the configured backend model. Review detections before taking maintenance action.</strong></div><form className="ai-upload" onSubmit={submit}><label>Inspection image<input type="file" accept="image/*" onChange={chooseFile} /></label><button className="primary" type="submit" disabled={!file || loading}>{loading ? 'Running model…' : 'Run detection'}</button>{file && <span className="muted">{file.name}</span>}{error && <p className="login-error" role="alert">{error}</p>}</form><div className="ai-detection-grid"><Panel title="Inspection image" status={result ? `${result.image_width} × ${result.image_height}` : imageUrl ? 'Ready to analyze' : 'Choose an image'}>{loading ? <LoadingState>Running inference on the backend model...</LoadingState> : <DetectionFrame image={imageUrl} result={result} />}</Panel><Panel title="Model detections" status={loading ? 'Running' : result ? `${detections.length} found` : 'Waiting for image'}>{result ? <div className="ai-details"><dl className="detail-list"><dt>Model</dt><dd>{display(result.model)}</dd><dt>Image size</dt><dd className="mono">{result.image_width} × {result.image_height}</dd><dt>Detections</dt><dd className="mono">{detections.length}</dd>{result.inference_ms !== undefined && <><dt>Inference time</dt><dd className="mono">{result.inference_ms} ms</dd></>}</dl>{detections.length ? <div className="ai-results">{detections.map((item, index) => <div className="ai-result" key={index}><b>{item.defect_type || item.class_name || 'Detection'}</b><span>{(Number(item.confidence) * 100).toFixed(1)}% confidence</span><small>{item.bbox?.x1}, {item.bbox?.y1} – {item.bbox?.x2}, {item.bbox?.y2}</small></div>)}</div> : <EmptyState>No defects detected in this image.</EmptyState>}</div> : <EmptyState>Choose an image and run detection to see model results.</EmptyState>}</Panel></div></>
+}

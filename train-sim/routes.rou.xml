@@ -1,0 +1,6 @@
+<routes>
+  <vType id="train" vClass="rail" length="50" maxSpeed="30"/>
+  <route id="route_A" edges="entry track_A"/>
+  <route id="route_B" edges="entry fork_B track_B"/>
+  <vehicle id="train_0" type="train" route="route_A" depart="0"/>
+</routes>

@@ -1,0 +1,11 @@
+import React, { useState } from 'react'
+import Header from '../components/Header'
+import Panel from '../components/Panel'
+import Lamp from '../components/Lamp'
+import { EmptyState, ErrorState, LoadingState, SimulationDisconnected } from '../components/StateMessage'
+import { useAppMode } from '../context/AppModeContext'
+import { useSimulationState } from '../hooks/useData'
+import { setSimulationMode } from '../services/api'
+
+const scenarios = ['clear_clear', 's3_on_A', 's2_on_A_B_occupied', 'both_s3']
+export default function Simulation() { const { mode, setMode } = useAppMode(); const state = useSimulationState(); const [scenario, setScenario] = useState(''); const [message, setMessage] = useState(''); const choose = async (value) => { setScenario(value); setMode('simulation'); try { await setSimulationMode({ mode: 'simulation', scenario: value }); setMessage('Scenario submitted.') } catch { setMessage('Simulation is disconnected.') } }; return <><Header title="Simulation" text="Scenario playback and decision-support state." /><div className="banner"><strong>SIMULATION / DECISION-SUPPORT MODE, not live railway control.</strong></div><div className="simulation-grid"><Panel title="Current mode" status={mode}><div className="simulation-mode"><Lamp severity={mode === 'simulation' ? 'warning' : 'clear'} label={mode.toUpperCase()} /><b>{mode === 'simulation' ? 'Simulation active' : 'Live mode'}</b></div></Panel><Panel title="Scenario"><label className="wide-label">Choose scenario<select value={scenario} onChange={(event) => choose(event.target.value)}><option value="">Select scenario</option>{scenarios.map((item) => <option key={item}>{item}</option>)}</select></label>{message && <p className="muted">{message}</p>}</Panel><Panel title="Simulation state" status={state.loading ? 'Loading' : state.error ? 'Unavailable' : 'Connected'}>{state.loading ? <LoadingState>Loading simulation...</LoadingState> : state.error ? <SimulationDisconnected /> : state.data ? <dl className="detail-list"><dt>Status</dt><dd>{state.data.status || 'NO DATA'}</dd><dt>Scenario</dt><dd>{state.data.scenario || 'NO DATA'}</dd><dt>Position</dt><dd className="mono">{state.data.position ?? 'NO DATA'}</dd></dl> : <EmptyState>Simulation state unavailable</EmptyState>}</Panel></div></> }

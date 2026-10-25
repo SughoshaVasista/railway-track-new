@@ -1,0 +1,6 @@
+<edges>
+  <edge id="entry" from="start" to="junctionA" numLanes="1"/>
+  <edge id="track_A" from="junctionA" to="end" numLanes="1"/>
+  <edge id="track_B" from="junctionB" to="end" numLanes="1"/>
+  <edge id="fork_B" from="junctionA" to="junctionB" numLanes="1"/>
+</edges>

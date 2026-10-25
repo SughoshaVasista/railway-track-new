@@ -1,0 +1,7 @@
+import React from 'react'
+import Header from '../components/Header'
+import Lamp from '../components/Lamp'
+import { EmptyState, ErrorState, LoadingState } from '../components/StateMessage'
+import { useAlerts } from '../hooks/useData'
+
+export default function RepairHistory() { const state = useAlerts({ status: 'RESOLVED' }); const items = Array.isArray(state.data) ? state.data : []; return <><Header title="Repair History" text="Resolved defects and repair evidence." />{state.loading ? <LoadingState>Loading repair history...</LoadingState> : state.error ? <ErrorState /> : items.length ? <div className="repair-history">{items.map((item) => <article className="repair-card" key={item.id}><div className="repair-meta"><Lamp severity={String(item.severity || 'missing_data').toLowerCase()} label={item.severity || 'NO DATA'} /><b>{item.defect || item.type || 'NO DATA'}</b><code>{item.chainage || 'NO DATA'}</code></div><div className="repair-images"><div>{item.before_image || item.before_image_url ? <img src={item.before_image || item.before_image_url} alt="Before repair" /> : <EmptyState>Image unavailable</EmptyState>}<small>Before</small></div><div>{item.after_image || item.after_image_url ? <img src={item.after_image || item.after_image_url} alt="After repair" /> : <EmptyState>Image unavailable</EmptyState>}<small>After</small></div></div></article>)}</div> : <EmptyState>No resolved repairs</EmptyState>}</> }

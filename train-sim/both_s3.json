@@ -1,0 +1,39 @@
+{
+  "timestamp": 1790321041.1570072,
+  "train_id": "train_0",
+  "position": 0.0,
+  "action": "EMERGENCY_STOP",
+  "target_track": null,
+  "confidence": 0.0,
+  "rules_checked": [
+    {
+      "rule": "Target track is unoccupied",
+      "passed": true
+    },
+    {
+      "rule": "No S3 defect on target track",
+      "passed": false
+    },
+    {
+      "rule": "Switch mechanism is available",
+      "passed": true
+    },
+    {
+      "rule": "Target track is unoccupied",
+      "passed": true
+    },
+    {
+      "rule": "No S3 defect on target track",
+      "passed": false
+    },
+    {
+      "rule": "Switch mechanism is available",
+      "passed": true
+    }
+  ],
+  "reason": "No safe track available \u2014 both blocked.",
+  "raw_scores": {
+    "A": null,
+    "B": null
+  }
+}

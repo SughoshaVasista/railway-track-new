@@ -1,0 +1,15 @@
+import React, { lazy, Suspense } from 'react'
+import { LogOut, TrainFront, UserRound } from 'lucide-react'
+import { Navigate, Route, Routes } from 'react-router-dom'
+import Nav from './Nav'
+import AppModeToggle from './AppModeToggle'
+import ProtectedRoute from './ProtectedRoute'
+import { useAuth } from '../context/AuthContext'
+import { LoadingState } from './StateMessage'
+
+const Dashboard = lazy(() => import('../pages/Dashboard')); const Alerts = lazy(() => import('../pages/Alerts')); const MapPage = lazy(() => import('../pages/MapPage')); const AI = lazy(() => import('../pages/AI')); const Hardware = lazy(() => import('../pages/Hardware')); const Worker = lazy(() => import('../pages/Worker')); const Switching = lazy(() => import('../pages/Switching')); const Tasks = lazy(() => import('../pages/Tasks')); const Workers = lazy(() => import('../pages/Workers')); const RepairHistory = lazy(() => import('../pages/RepairHistory')); const SensorHistory = lazy(() => import('../pages/SensorHistory')); const Simulation = lazy(() => import('../pages/Simulation')); const Model = lazy(() => import('../pages/Model')); const Settings = lazy(() => import('../pages/Settings'))
+
+export default function Shell() {
+  const { user, logout } = useAuth(); const home = user.role === 'admin' ? '/admin' : '/worker'; const admin = (element) => <ProtectedRoute allowedRoles={['admin']}>{element}</ProtectedRoute>
+  return <div className="shell"><Nav /><main className="content"><header className="topbar"><div className="topbar-brand"><TrainFront size={22} /><b>RailSafe</b></div><AppModeToggle /><div className="topbar-user"><UserRound size={16} /><span>{user.name}</span><button className="icon" onClick={logout} aria-label="Log out"><LogOut size={17} /></button></div></header><div className="page"><Suspense fallback={<LoadingState>Loading view...</LoadingState>}><Routes><Route path="/" element={<Navigate to={home} replace />} /><Route path="/admin" element={admin(<Dashboard />)} /><Route path="/alerts" element={admin(<Alerts />)} /><Route path="/hardware" element={admin(<Hardware />)} /><Route path="/switching" element={admin(<Switching />)} /><Route path="/tasks" element={admin(<Tasks />)} /><Route path="/workers" element={admin(<Workers />)} /><Route path="/repair-history" element={admin(<RepairHistory />)} /><Route path="/sensor-history" element={admin(<SensorHistory />)} /><Route path="/simulation" element={admin(<Simulation />)} /><Route path="/model" element={admin(<Model />)} /><Route path="/settings" element={admin(<Settings />)} /><Route path="/map" element={<ProtectedRoute allowedRoles={['admin', 'worker']}><MapPage /></ProtectedRoute>} /><Route path="/ai-detection" element={admin(<AI />)} /><Route path="/ai" element={admin(<AI />)} /><Route path="/worker" element={<ProtectedRoute allowedRoles={['admin', 'worker']}><Worker /></ProtectedRoute>} /><Route path="/worker/:taskId" element={<ProtectedRoute allowedRoles={['admin', 'worker']}><Worker /></ProtectedRoute>} /><Route path="*" element={<Navigate to={home} replace />} /></Routes></Suspense></div></main></div>
+}

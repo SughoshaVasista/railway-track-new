@@ -1,0 +1,5 @@
+-r ../backend/requirements.txt
+ultralytics>=8.4.83,<9
+roboflow>=1.1,<2
+PyYAML>=6,<7
+
