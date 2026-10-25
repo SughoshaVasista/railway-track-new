@@ -25,6 +25,10 @@ def compute_summary(conn) -> dict:
         "total_devices": devices["total"] or 0,
         "online_devices": devices["online"] or 0,
         "updated_at": utc_now(),
+        "s3_alerts": row["critical_s3"] or 0,
+        "s2_alerts": row["moderate_s2"] or 0,
+        "s1_alerts": row["minor_s1"] or 0,
+        "pending_tasks": pending,
     }
 
 

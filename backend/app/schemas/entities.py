@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 
 from app.schemas.common import ApiModel
 
@@ -22,9 +22,15 @@ class Severity(StrEnum):
 
 class AlertStatus(StrEnum):
     ACTIVE = "ACTIVE"
+    DETECTED = "DETECTED"
+    VERIFIED = "VERIFIED"
+    ACKNOWLEDGED = "ACKNOWLEDGED"
     ASSIGNED = "ASSIGNED"
     IN_PROGRESS = "IN_PROGRESS"
+    UNDER_REPAIR = "UNDER_REPAIR"
     RESOLVED = "RESOLVED"
+    FALSE_POSITIVE = "FALSE_POSITIVE"
+    REOPENED = "REOPENED"
 
 
 class Priority(StrEnum):
@@ -124,6 +130,12 @@ class AlertOut(ApiModel):
     bbox: BoundingBox | None = None
     created_at: str
     resolved_at: str | None
+    id: str | None = None
+    defect: str | None = None
+    type: str | None = None
+    track: str | None = None
+    gps: dict | None = None
+    image: str | None = None
 
 
 class DeviceCreate(ApiModel):
@@ -144,6 +156,9 @@ class DeviceOut(ApiModel):
     status: DeviceStatus
     last_seen: str | None
     created_at: str
+    id: str | None = None
+    name: str | None = None
+    platform: str | None = None
 
 
 class SensorCreate(ApiModel):
@@ -192,7 +207,7 @@ class DeviceHealth(ApiModel):
 
 class TaskCreate(ApiModel):
     alert_id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
-    assigned_worker_id: str | None = Field(default=None, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    assigned_worker_id: str | None = Field(default=None, max_length=80, pattern=r"^[A-Za-z0-9_-]+$", validation_alias=AliasChoices("assigned_worker_id", "worker_id"))
     priority: Priority | None = None
     remarks: str | None = Field(default=None, max_length=4000)
 
@@ -221,14 +236,21 @@ class TaskOut(ApiModel):
     completed_at: str | None
     completion_image: str | None
     remarks: str | None
+    id: str | None = None
+    worker_id: str | None = None
+    defect: str | None = None
+    chainage: str | None = None
+    image_url: str | None = None
+    before_image_url: str | None = None
+    after_image_url: str | None = None
 
 
 class SwitchDecisionCreate(ApiModel):
     train_id: str | None = Field(default=None, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
     switch_id: str | None = Field(default=None, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
     current_track: str | None = Field(default=None, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
-    selected_track: str | None = Field(default=None, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
-    reason: str = Field(min_length=1, max_length=2000)
+    selected_track: str | None = Field(default=None, max_length=80, pattern=r"^[A-Za-z0-9_-]+$", validation_alias=AliasChoices("selected_track", "target_track"))
+    reason: str = Field(default="Decision submitted from the operations console.", min_length=1, max_length=2000)
     confidence: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
     emergency_stop: bool = False
     timestamp: datetime | None = None
@@ -260,6 +282,10 @@ class DashboardSummary(ApiModel):
     total_devices: int
     online_devices: int
     updated_at: str
+    s3_alerts: int = 0
+    s2_alerts: int = 0
+    s1_alerts: int = 0
+    pending_tasks: int = 0
 
 
 class Detection(ApiModel):

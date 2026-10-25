@@ -9,12 +9,13 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Security
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import APIKeyHeader
 
 from app.config import get_settings
 from app.database import check_database, initialize_database
 from app.firebase import FirebaseMirror, dispatch_outbox
-from app.routers import alerts, dashboard, devices, inference, sensors, switch, tasks
+from app.routers import alerts, dashboard, devices, frontend_compat, inference, sensors, switch, tasks
 from app.services.common import ServiceError
 from app.services.inference_service import ModelManager
 
@@ -72,6 +73,7 @@ app = FastAPI(
     dependencies=[Depends(authenticate_api)],
 )
 app.state.settings = settings
+app.mount("/media", StaticFiles(directory=settings.database_path.parent / "evidence", check_dir=False), name="media")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.cors_origins),
@@ -122,6 +124,6 @@ def ready_health():
     return {"success": True, "data": {"database": "ready"}, "error": None}
 
 
-for route_module in (alerts, devices, sensors, tasks, switch, dashboard, inference):
+for route_module in (alerts, devices, sensors, tasks, switch, dashboard, inference, frontend_compat):
     app.include_router(route_module.router)
 

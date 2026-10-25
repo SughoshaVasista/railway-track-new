@@ -5,6 +5,12 @@ from app.services.common import ServiceError, timestamp_value
 from app.services.dashboard_service import sync_summary
 
 
+def _device_view(row) -> dict:
+    result = dict(row)
+    result.update({"id": result["device_id"], "name": result["device_name"], "platform": "Rail inspection device"})
+    return result
+
+
 def create_device(payload) -> dict:
     now = utc_now()
     with connection() as conn:
@@ -17,7 +23,7 @@ def create_device(payload) -> dict:
             if "UNIQUE constraint failed" in str(exc):
                 raise ServiceError(f"Device '{payload.device_id}' already exists", 409) from exc
             raise
-        result = dict(conn.execute("SELECT * FROM device WHERE device_id=?", (payload.device_id,)).fetchone())
+        result = _device_view(conn.execute("SELECT * FROM device WHERE device_id=?", (payload.device_id,)).fetchone())
         queue_firebase_sync(conn, f"/devices/{payload.device_id}", {"status": "OFFLINE", "last_seen": None})
         sync_summary(conn)
     return result
@@ -25,7 +31,7 @@ def create_device(payload) -> dict:
 
 def list_devices() -> list[dict]:
     with connection() as conn:
-        return [dict(row) for row in conn.execute("SELECT * FROM device ORDER BY device_id").fetchall()]
+        return [_device_view(row) for row in conn.execute("SELECT * FROM device ORDER BY device_id").fetchall()]
 
 
 def get_device(device_id: str) -> dict:
@@ -33,7 +39,7 @@ def get_device(device_id: str) -> dict:
         row = conn.execute("SELECT * FROM device WHERE device_id=?", (device_id,)).fetchone()
     if not row:
         raise ServiceError(f"Device '{device_id}' not found", 404)
-    return dict(row)
+    return _device_view(row)
 
 
 def heartbeat(device_id: str, timestamp=None, location: str | None = None) -> dict:
@@ -46,7 +52,7 @@ def heartbeat(device_id: str, timestamp=None, location: str | None = None) -> di
             "UPDATE device SET status='ONLINE',last_seen=?,location=COALESCE(?,location) WHERE device_id=?",
             (seen, location, device_id),
         )
-        result = dict(conn.execute("SELECT * FROM device WHERE device_id=?", (device_id,)).fetchone())
+        result = _device_view(conn.execute("SELECT * FROM device WHERE device_id=?", (device_id,)).fetchone())
         queue_firebase_sync(conn, f"/devices/{device_id}", {"status": "ONLINE", "last_seen": seen})
         sync_summary(conn)
     return result

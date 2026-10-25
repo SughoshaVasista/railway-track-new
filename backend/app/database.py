@@ -62,6 +62,18 @@ CREATE TABLE IF NOT EXISTS alert (
     created_at TEXT NOT NULL,
     resolved_at TEXT
 );
+CREATE TABLE IF NOT EXISTS alert_lifecycle (
+    alert_id TEXT PRIMARY KEY REFERENCES alert(alert_id) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS alert_event (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alert_id TEXT NOT NULL REFERENCES alert(alert_id) ON DELETE CASCADE,
+    action TEXT NOT NULL,
+    details_json TEXT,
+    timestamp TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_alert_status_time ON alert(status, created_at DESC);
 CREATE TABLE IF NOT EXISTS app_user (
     user_id TEXT PRIMARY KEY,
@@ -117,6 +129,12 @@ CREATE TABLE IF NOT EXISTS switch_decision (
     confidence REAL CHECK(confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
     emergency_stop INTEGER NOT NULL DEFAULT 0 CHECK(emergency_stop IN (0,1)),
     timestamp TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS simulation_state (
+    state_id INTEGER PRIMARY KEY CHECK(state_id=1),
+    mode TEXT NOT NULL DEFAULT 'live' CHECK(mode IN ('live','simulation')),
+    scenario TEXT,
+    updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_switch_decision_time ON switch_decision(timestamp DESC);
 CREATE TABLE IF NOT EXISTS sync_outbox (

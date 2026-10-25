@@ -10,6 +10,20 @@ def _get_task(conn, task_id: str):
     return conn.execute("SELECT * FROM maintenance_task WHERE task_id=?", (task_id,)).fetchone()
 
 
+def _task_view(conn, row) -> dict:
+    result = dict(row)
+    result["id"] = result["task_id"]
+    result["worker_id"] = result.get("assigned_worker_id")
+    details = conn.execute(
+        """SELECT d.defect_type,d.chainage,d.image_url FROM alert a
+           JOIN defect d ON d.defect_id=a.defect_id WHERE a.alert_id=?""",
+        (result["alert_id"],),
+    ).fetchone()
+    if details:
+        result.update({"defect": details["defect_type"], "chainage": details["chainage"], "image_url": details["image_url"], "before_image_url": details["image_url"], "after_image_url": result.get("completion_image")})
+    return result
+
+
 def _check_worker(conn, worker_id: str | None) -> None:
     if worker_id is None:
         return
@@ -41,7 +55,9 @@ def list_tasks(worker_id: str | None, status: str | None, limit: int, offset: in
             f"SELECT * FROM maintenance_task{where} ORDER BY assigned_at DESC LIMIT ? OFFSET ?",
             [*params, limit, offset],
         ).fetchall()
-    return {"items": [dict(row) for row in rows], "total": total, "limit": limit, "offset": offset}
+    with connection() as conn:
+        items = [_task_view(conn, row) for row in rows]
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 def get_task(task_id: str) -> dict:
@@ -49,7 +65,8 @@ def get_task(task_id: str) -> dict:
         row = _get_task(conn, task_id)
     if not row:
         raise ServiceError(f"Task '{task_id}' not found", 404)
-    return dict(row)
+    with connection() as conn:
+        return _task_view(conn, row)
 
 
 def create_task(payload) -> dict:
@@ -68,7 +85,9 @@ def create_task(payload) -> dict:
             (task_id, payload.alert_id, payload.assigned_worker_id, priority, now, payload.remarks),
         )
         conn.execute("UPDATE alert SET status='ASSIGNED' WHERE alert_id=? AND status='ACTIVE'", (payload.alert_id,))
-        record = dict(_get_task(conn, task_id))
+        conn.execute("INSERT INTO alert_lifecycle(alert_id,status,updated_at) VALUES (?, 'ASSIGNED', ?) ON CONFLICT(alert_id) DO UPDATE SET status='ASSIGNED',updated_at=excluded.updated_at", (payload.alert_id, now))
+        conn.execute("INSERT INTO alert_event(alert_id,action,details_json,timestamp) VALUES (?, 'ASSIGNED', ?, ?)", (payload.alert_id, '{"source":"task_assignment"}', now))
+        record = _task_view(conn, _get_task(conn, task_id))
         queue_firebase_sync(conn, f"/tasks/{task_id}", record)
         _sync_alert(conn, payload.alert_id)
         sync_summary(conn)
@@ -94,7 +113,7 @@ def update_task(task_id: str, payload) -> dict:
                 f"UPDATE maintenance_task SET {','.join(f'{field}=?' for field in fields)} WHERE task_id=?",
                 [*values, task_id],
             )
-        record = dict(_get_task(conn, task_id))
+        record = _task_view(conn, _get_task(conn, task_id))
         queue_firebase_sync(conn, f"/tasks/{task_id}", record)
     return record
 
@@ -124,13 +143,15 @@ def update_status(task_id: str, payload) -> dict:
                WHERE task_id=?""",
             (payload.status.value, started, completed, remarks, completion_image, task_id),
         )
-        record = dict(_get_task(conn, task_id))
+        record = _task_view(conn, _get_task(conn, task_id))
         queue_firebase_sync(conn, f"/tasks/{task_id}", record)
         if payload.status.value == "IN_PROGRESS":
             conn.execute(
                 "UPDATE alert SET status='IN_PROGRESS' WHERE alert_id=? AND status!='RESOLVED'",
                 (record["alert_id"],),
             )
+            conn.execute("INSERT INTO alert_lifecycle(alert_id,status,updated_at) VALUES (?, 'UNDER_REPAIR', ?) ON CONFLICT(alert_id) DO UPDATE SET status='UNDER_REPAIR',updated_at=excluded.updated_at", (record["alert_id"], now))
+            conn.execute("INSERT INTO alert_event(alert_id,action,details_json,timestamp) VALUES (?, 'UNDER_REPAIR', ?, ?)", (record["alert_id"], '{"source":"task_status"}', now))
             _sync_alert(conn, record["alert_id"])
         if payload.status.value == "COMPLETED":
             remaining = conn.execute(
@@ -142,6 +163,8 @@ def update_status(task_id: str, payload) -> dict:
                     "UPDATE alert SET status='RESOLVED',resolved_at=? WHERE alert_id=?",
                     (now, record["alert_id"]),
                 )
+                conn.execute("INSERT INTO alert_lifecycle(alert_id,status,updated_at) VALUES (?, 'RESOLVED', ?) ON CONFLICT(alert_id) DO UPDATE SET status='RESOLVED',updated_at=excluded.updated_at", (record["alert_id"], now))
+                conn.execute("INSERT INTO alert_event(alert_id,action,details_json,timestamp) VALUES (?, 'RESOLVED', ?, ?)", (record["alert_id"], '{"source":"task_completion"}', now))
                 _sync_alert(conn, record["alert_id"])
         sync_summary(conn)
     return record

@@ -10,15 +10,25 @@ from app.services.dashboard_service import sync_summary
 ALERT_SELECT = """SELECT a.alert_id, a.defect_id, a.priority, a.status, a.created_at, a.resolved_at,
     d.device_id, d.sensor_id, d.defect_type, d.confidence, d.severity, d.latitude, d.longitude,
     d.chainage, d.timestamp, d.image_url, d.bbox_json,
-    device.device_name AS device_name, device.location AS device_location, sensor.sensor_type AS sensor_type
+    device.device_name AS device_name, device.location AS device_location, sensor.sensor_type AS sensor_type,
+    lifecycle.status AS lifecycle_status
     FROM alert a JOIN defect d ON d.defect_id = a.defect_id
-    JOIN device ON device.device_id = d.device_id LEFT JOIN sensor ON sensor.sensor_id = d.sensor_id"""
+    JOIN device ON device.device_id = d.device_id LEFT JOIN sensor ON sensor.sensor_id = d.sensor_id
+    LEFT JOIN alert_lifecycle lifecycle ON lifecycle.alert_id=a.alert_id"""
 
 
 def _alert(row) -> dict:
     data = dict(row)
     raw_bbox = data.pop("bbox_json", None)
     data["bbox"] = json.loads(raw_bbox) if raw_bbox else None
+    lifecycle_status = data.pop("lifecycle_status", None)
+    data["id"] = data["alert_id"]
+    data["defect"] = data["defect_type"]
+    data["type"] = data["defect_type"]
+    data["track"] = data.get("device_location") or "NO DATA"
+    data["status"] = lifecycle_status or {"ACTIVE": "DETECTED", "IN_PROGRESS": "UNDER_REPAIR"}.get(data["status"], data["status"])
+    data["gps"] = {"lat": data.get("latitude"), "lng": data.get("longitude")}
+    data["image"] = data.get("image_url")
     return data
 
 
@@ -60,7 +70,7 @@ def create_alert(payload) -> dict:
 def list_alerts(status: str | None, severity: str | None, limit: int, offset: int) -> dict:
     clauses, params = [], []
     if status:
-        clauses.append("a.status=?")
+        clauses.append("COALESCE(lifecycle.status, CASE a.status WHEN 'ACTIVE' THEN 'DETECTED' WHEN 'IN_PROGRESS' THEN 'UNDER_REPAIR' ELSE a.status END)=?")
         params.append(status)
     if severity:
         clauses.append("d.severity=?")
@@ -68,7 +78,7 @@ def list_alerts(status: str | None, severity: str | None, limit: int, offset: in
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     with connection() as conn:
         total = conn.execute(
-            f"SELECT COUNT(*) FROM alert a JOIN defect d ON d.defect_id=a.defect_id{where}", params
+            f"SELECT COUNT(*) FROM alert a JOIN defect d ON d.defect_id=a.defect_id LEFT JOIN alert_lifecycle lifecycle ON lifecycle.alert_id=a.alert_id{where}", params
         ).fetchone()[0]
         rows = conn.execute(
             f"{ALERT_SELECT}{where} ORDER BY a.created_at DESC LIMIT ? OFFSET ?",
@@ -86,12 +96,28 @@ def get_alert(alert_id: str) -> dict:
 
 
 def update_status(alert_id: str, status: str) -> dict:
+    status_map = {
+        "DETECTED": "ACTIVE", "VERIFIED": "ACTIVE", "REOPENED": "ACTIVE",
+        "ACKNOWLEDGED": "ASSIGNED", "ASSIGNED": "ASSIGNED",
+        "UNDER_REPAIR": "IN_PROGRESS", "IN_PROGRESS": "IN_PROGRESS",
+        "RESOLVED": "RESOLVED", "FALSE_POSITIVE": "RESOLVED",
+        "ACTIVE": "ACTIVE",
+    }
+    stored_status = status_map.get(status)
+    if not stored_status:
+        raise ServiceError(f"Unsupported alert status '{status}'", 422)
+    now = utc_now()
     with connection() as conn:
         row = conn.execute("SELECT alert_id FROM alert WHERE alert_id=?", (alert_id,)).fetchone()
         if not row:
             raise ServiceError(f"Alert '{alert_id}' not found", 404)
-        resolved_at = utc_now() if status == "RESOLVED" else None
-        conn.execute("UPDATE alert SET status=?,resolved_at=? WHERE alert_id=?", (status, resolved_at, alert_id))
+        resolved_at = now if stored_status == "RESOLVED" else None
+        conn.execute("UPDATE alert SET status=?,resolved_at=? WHERE alert_id=?", (stored_status, resolved_at, alert_id))
+        if status not in {"ACTIVE", "ASSIGNED", "IN_PROGRESS", "RESOLVED"}:
+            conn.execute("INSERT INTO alert_lifecycle(alert_id,status,updated_at) VALUES (?,?,?) ON CONFLICT(alert_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at", (alert_id, status, now))
+            conn.execute("INSERT INTO alert_event(alert_id,action,details_json,timestamp) VALUES (?,?,NULL,?)", (alert_id, status, now))
+        else:
+            conn.execute("DELETE FROM alert_lifecycle WHERE alert_id=?", (alert_id,))
         record = _alert(conn.execute(f"{ALERT_SELECT} WHERE a.alert_id=?", (alert_id,)).fetchone())
         queue_firebase_sync(conn, f"/alerts/{alert_id}", record)
         sync_summary(conn)
